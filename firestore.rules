@@ -1,0 +1,95 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * COASTAL SENTINEL SECURITY RULES
+     * Global Read / Administrative Write
+     */
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/roles_admin/$(request.auth.uid)) ||
+        request.auth.token.email == "mangroovestartup@gmail.com"
+      );
+    }
+
+    function isExistingAdmin() {
+      return isAdmin() && resource != null;
+    }
+
+    function pathMatchesId(id) {
+      return request.resource.data.id == id;
+    }
+
+    // --- COLLECTION RULES ---
+
+    // 1. Internal Patch Repositories & Sensor Time-Series:
+    // STRICTLY READ-ONLY for all clients and AI. No push, put, update, or delete permitted.
+    match /MCIP_Patches/{patchId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+
+      match /TimeSeries/{month} {
+        allow read: if true;
+        allow create, update, delete: if false;
+      }
+    }
+
+    // 2. Historical MRV Registry Records:
+    // Immutable audit trail. Only authorized admin can create/update. Deletions are forbidden.
+    match /MCIP_Registry_Records/{id} {
+      allow read: if true;
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+
+    // 3. Computed Health Scores & Anomaly Signals:
+    // Computed exclusively by backend ingestion pipeline. Strictly immutable for clients/AI.
+    match /MCIP_Health_Scores/{id} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // 4. External Coastal Context:
+    match /MCIP_External_Context/{id} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // 5. Featured Anomaly Alerts:
+    match /MCIP_Featured_Alerts/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /roles_admin/{userId} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create, update: if isAdmin() && pathMatchesId(userId);
+      allow delete: if isAdmin();
+    }
+
+    match /Registry/{id} {
+      allow get, list: if true;
+      allow create: if isAdmin() && pathMatchesId(id);
+      allow update: if isExistingAdmin() && pathMatchesId(id);
+      allow delete: if isAdmin();
+    }
+
+    match /MCIP_Intelligence_Reports/{id} {
+      allow read, write: if true;
+    }
+
+    // Default fallback: read allowed, write restricted to admin only
+    match /{path=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
